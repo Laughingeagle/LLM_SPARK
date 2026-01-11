@@ -1,3 +1,4 @@
 # 添加以下内容
 .env.local
 node_modules/
+dist/
