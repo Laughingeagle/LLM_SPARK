@@ -57,15 +57,25 @@ const loading = ref(false)
 const aiResponse = ref('')
 
 // Memoize formatTime to avoid creating new Date objects on every render
+// Cache is limited to 100 entries to prevent memory leaks in long sessions
+const MAX_TIME_CACHE_SIZE = 100
 const timeCache = new Map<number, string>()
 const formatTime = (timestamp: number) => {
   if (!timeCache.has(timestamp)) {
+    // Clear oldest entries if cache is full
+    if (timeCache.size >= MAX_TIME_CACHE_SIZE) {
+      const firstKey = timeCache.keys().next().value
+      if (firstKey !== undefined) {
+        timeCache.delete(firstKey)
+      }
+    }
     timeCache.set(timestamp, new Date(timestamp).toLocaleTimeString())
   }
   return timeCache.get(timestamp)!
 }
 
 // Debounce scrollToBottom to prevent excessive scroll operations
+// 100ms delay provides good balance between responsiveness and performance
 let scrollTimeout: ReturnType<typeof setTimeout> | null = null
 const scrollToBottom = async () => {
   if (scrollTimeout) {
@@ -80,7 +90,7 @@ const scrollToBottom = async () => {
       })
     }
     scrollTimeout = null
-  }, 50)
+  }, 100)
 }
 
 const sendMessage = async () => {
