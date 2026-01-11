@@ -35,7 +35,6 @@
 <script setup lang="ts">
 import { ref, reactive, nextTick } from 'vue'
 import * as CryptoJS from 'crypto-js'
-import axios from 'axios'
 import { ElLoading } from 'element-plus'
 
 interface Message {
@@ -57,18 +56,41 @@ const messageContainer = ref<HTMLElement | null>(null)
 const loading = ref(false)
 const aiResponse = ref('')
 
+// Memoize formatTime to avoid creating new Date objects on every render
+// Cache is limited to 100 entries to prevent memory leaks in long sessions
+const MAX_TIME_CACHE_SIZE = 100
+const timeCache = new Map<number, string>()
 const formatTime = (timestamp: number) => {
-  return new Date(timestamp).toLocaleTimeString()
+  if (!timeCache.has(timestamp)) {
+    // Clear oldest entries if cache is full
+    if (timeCache.size >= MAX_TIME_CACHE_SIZE) {
+      const firstKey = timeCache.keys().next().value
+      if (firstKey !== undefined) {
+        timeCache.delete(firstKey)
+      }
+    }
+    timeCache.set(timestamp, new Date(timestamp).toLocaleTimeString())
+  }
+  return timeCache.get(timestamp)!
 }
 
+// Debounce scrollToBottom to prevent excessive scroll operations
+// 100ms delay provides good balance between responsiveness and performance
+let scrollTimeout: ReturnType<typeof setTimeout> | null = null
 const scrollToBottom = async () => {
-  await nextTick()
-  if (messageContainer.value) {
-    messageContainer.value.scrollTo({
-      top: messageContainer.value.scrollHeight,
-      behavior: 'smooth'
-    })
+  if (scrollTimeout) {
+    clearTimeout(scrollTimeout)
   }
+  scrollTimeout = setTimeout(async () => {
+    await nextTick()
+    if (messageContainer.value) {
+      messageContainer.value.scrollTo({
+        top: messageContainer.value.scrollHeight,
+        behavior: 'smooth'
+      })
+    }
+    scrollTimeout = null
+  }, 100)
 }
 
 const sendMessage = async () => {
@@ -135,13 +157,6 @@ const sendMessage = async () => {
       }, 30000)
     }
     
-    socket.onclose = (event) => {
-      clearInterval(heartbeatTimer)
-      if (event.code === 1006) {
-        aiMessage.content = '连接异常断开，请重试'
-      }
-    }
-    
     socket.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data)
@@ -157,7 +172,8 @@ const sendMessage = async () => {
             .map(t => t.content)
             .join('')
           
-          messages[messages.length - 1] = { ...aiMessage }
+          // Direct property update is more efficient than creating a new object
+          messages[messages.length - 1].content = aiMessage.content
           scrollToBottom()
         }
         
@@ -176,7 +192,12 @@ const sendMessage = async () => {
       loading.value = false
     }
 
+    // Single onclose handler to avoid memory leak with heartbeat timer
     socket.onclose = (event) => {
+      clearInterval(heartbeatTimer)
+      if (event.code === 1006) {
+        aiMessage.content = '连接异常断开，请重试'
+      }
       console.log('WebSocket连接参数', {
         authorization,
         date: btoa(date),
